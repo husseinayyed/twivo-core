@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/husseinayyed/twivo-media/internal/breaker"
+	"github.com/husseinayyed/twivo-core/pkg/breaker"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
@@ -15,7 +15,7 @@ var (
 	REDIS_URL   = os.Getenv("REDIS_URL")
 )
 
-func ConnectRedis() (*goredis.Client, error) {
+func Connect() (*goredis.Client, error) {
 	redisHost := REDIS_URL
 
 	if redisHost == "" {
@@ -38,6 +38,7 @@ func ConnectRedis() (*goredis.Client, error) {
 		defer cancel()
 
 		if err := client.Ping(ctx).Err(); err != nil {
+			client.Close()
 			return nil, err
 		}
 
