@@ -1,0 +1,31 @@
+x-logging: &prod-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  nginx:
+    logging: *prod-logging
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-conf_prod:/var/cache/nginx
+  mongodb:
+    logging: *prod-logging
+    volumes:
+      - mongo_data_prod:/data/db
+  redis:
+    logging: *prod-logging
+    volumes:
+      - redis_data_prod:/data
+  twivo-core:
+    build:
+      target: prod
+    logging: *prod-logging
+volumes:
+  mongo_data_prod:
+    name: twivo-core-prod-mongo-data
+  nginx-conf_prod:
+    name: twivo-core-prod-nginx-conf
+  redis_data_prod:
+    name: twivo-core-prod-redis-data

@@ -1,0 +1,26 @@
+x-logging: &test-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  nginx:
+    logging: *test-logging
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    tmpfs:
+      - /var/cache/nginx
+  mongodb:
+    logging: *test-logging
+    tmpfs:
+      - /data/db
+  redis:
+    logging: *test-logging
+    tmpfs:
+      - /data
+  twivo-core:
+    build:
+      target: dev
+    logging: *test-logging
+    

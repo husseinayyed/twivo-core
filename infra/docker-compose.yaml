@@ -1,0 +1,71 @@
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    depends_on:
+      - redis
+      - twivo-core
+    networks:
+      - twivo-network
+  mongodb:
+    image: mongo:latest
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+    expose:
+      - "27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGODB_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGODB_PASSWORD}
+    restart: unless-stopped
+    networks:
+      - twivo-network
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --tcp-keepalive 60
+      --requirepass ${REDIS_PASS}
+      --appendonly yes
+    environment:
+      REDIS_PASS: ${REDIS_PASS}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASS\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    expose:
+      - "6379"
+    networks:
+      - twivo-network
+
+  twivo-core:
+    build:
+      context: .
+      target: dev
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    networks:
+      - twivo-network
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    expose:
+      - "8080"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+networks:
+  twivo-network:
+    driver: bridge

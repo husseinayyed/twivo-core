@@ -1,0 +1,35 @@
+x-logging: &dev-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  nginx:
+    logging: *dev-logging
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-conf_dev:/var/cache/nginx
+  mongodb:
+    logging: *dev-logging
+    volumes:
+      - mongo_data_dev:/data/db
+  redis:
+    logging: *dev-logging
+    volumes:
+      - redis_data_dev:/data
+  twivo-core:
+    build:
+      target: dev
+    logging: *dev-logging
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+volumes:
+  mongo_data_dev:
+    name: twivo-core-dev-mongo-data
+  nginx-conf_dev:
+    name: twivo-core-dev-nginx-conf
+  redis_data_dev:
+    name: twivo-core-dev-redis-data
