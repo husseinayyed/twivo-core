@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
 	"github.com/rs/zerolog/log"
 	"github.com/sony/gobreaker/v2"
 )
@@ -14,9 +15,12 @@ type Registry struct {
 	breakers map[string]*gobreaker.CircuitBreaker[any]
 }
 
+// Group is the default process-wide registry used by infrastructure clients.
+var Group = NewGroup()
+
 // NewGroup creates a new circuit breaker registry with default settings for the app's external dependencies.
 func NewGroup() *Registry {
-    group := &Registry{}
+	group := &Registry{breakers: make(map[string]*gobreaker.CircuitBreaker[any])}
     group.New("Mongo", 60*time.Second, 30*time.Second)
     group.New("Redis", 30*time.Second, 15*time.Second)
     return group
