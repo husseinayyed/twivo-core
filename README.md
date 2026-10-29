@@ -54,67 +54,106 @@ Packages stay focused on their own concern. Bootstrap code connects them for app
 cp infra/.env.example infra/.env
 ```
 
-Configure `MONGODB_USER`, `MONGODB_PASSWORD`, `MONGODB_URL`, `REDIS_URL`, and `REDIS_PASS`. Docker Compose uses the `mongodb` and `redis` service hostnames; local overrides may use `localhost`.
+Configure `MONGO_USER`, `MONGO_PASSWORD`, `MONGO_URL`, `REDIS_PASS`, and `REDIS_URL`. `REDIS_URL` is the address only (for example, `redis://redis:6379/0`); bootstrap applies `REDIS_PASS` using Redis password authentication. Docker Compose uses the `mongodb` and `redis` service hostnames; local overrides may use `localhost`.
+
+MongoDB's Compose root user is authenticated against the `admin` database. The MongoDB image only creates that user when its data directory is first initialized; if credentials changed after the dev volume was created, the persisted database still has the old credentials. Update that database user or recreate the Mongo dev volume (this deletes its local data).
 
 Never commit real credentials. Inject production secrets through the deployment platform or a secret manager.
 
 ## Development workflow
 
-A Makefile will provide the primary workflow:
+A Makefile provides the primary workflow:
 
 ```text
-make dev       Start development infrastructure
-make test      Run tests
-make lint      Run formatting and static checks
-make build     Build the module
-make logs      Show service logs
-make down      Stop infrastructure containers
-make clean     Remove generated artifacts
+make dev        Start development app, MongoDB, and Redis
+make test       Run tests in Docker with temporary databases
+make shell      Enter the development app container
+make build-dev  Build the development image
+make build-test Build the test image
+make build-prod Build the production image
+make prod       Start the production app and databases
+make logs       Follow development logs
+make down       Stop development containers
 ```
 
-Until these targets exist, run the Compose development environment directly:
+Set up the local environment file before running Compose targets:
 
 ```bash
-docker compose \
-  -f infra/docker-compose.yaml \
-  -f infra/docker-compose.dev.yaml \
-  --env-file infra/.env up --build
-
-docker compose \
-  -f infra/docker-compose.yaml \
-  -f infra/docker-compose.dev.yaml \
-  --env-file infra/.env down
+cp infra/.env.example infra/.env
 ```
 
-## Go module usage
+## Add infrastructure in two steps
 
-```text
-github.com/husseinayyed/twivo-core
-```
-
-Applications can consume individual packages or the shared bootstrap API. Prefer explicit dependency injection for testable code and typed APIs for public clients and operations:
+No need to wire MongoDB, Redis, and circuit breakers by hand. Import bootstrap, then initialize the shared clients:
 
 ```go
-services, err := bootstrap.Init()
-if err != nil {
-    return err
+import "github.com/husseinayyed/twivo-core/pkg/bootstrap"
+
+func main() {
+    bootstrap.MustRun()
+    // Use bootstrap.Mongo_Client, bootstrap.Redis_Client, and bootstrap.Breaker.
 }
-defer services.Close(context.Background())
 ```
 
-High-level helpers provide convenience and standard policy. Lower-level APIs remain available for custom cache, database, retry, fallback, and invalidation behavior.
+`MustRun()` reads `MONGO_URL`, `MONGO_USER`, `MONGO_PASSWORD`, `REDIS_URL`, and `REDIS_PASS`, connects to MongoDB and Redis, and configures the shared circuit breakers. It exits with a logged error if startup fails, which is convenient for a service entry point. Set those variables in your deployment environment before starting the application.
 
-## Circuit breakers
+After initialization, access the clients from bootstrap. For example, select a MongoDB database and use the Redis client:
 
 ```go
-breaker.Init()
+import (
+    "context"
+    "time"
 
-result, err := breaker.Group.Execute("Mongo", func() (any, error) {
-    return connectMongo()
+    "github.com/husseinayyed/twivo-core/pkg/bootstrap"
+)
+
+func run() error {
+    if err := bootstrap.Run(); err != nil {
+        return err
+    }
+    defer bootstrap.Mongo_Client.Disconnect(context.Background())
+    defer bootstrap.Redis_Client.Close()
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    appDB := bootstrap.Mongo_Client.Database("myapp")
+    users := appDB.Collection("users")
+    if _, err := users.InsertOne(ctx, map[string]string{"name": "Ada"}); err != nil {
+        return err
+    }
+    return bootstrap.Redis_Client.Ping(ctx).Err()
+}
+```
+
+`bootstrap.Breaker` is the shared breaker registry. Its `Execute` method runs an operation behind a named breaker:
+
+```go
+result, err := bootstrap.Breaker.Execute("Mongo", func() (any, error) {
+    return performMongoOperation()
 })
 ```
 
-Named breakers protect external dependencies. State changes should be visible through structured logs and metrics, with configurable thresholds and timeouts.
+If the calling application needs to decide how startup failures are handled, use the error-returning `bootstrap.Run()` instead of `MustRun()`:
+
+```go
+if err := bootstrap.Run(); err != nil {
+    return err
+}
+```
+
+The initialized clients are long-lived connection pools; reuse them rather than creating a new client per operation. Close them during application shutdown:
+
+```go
+defer bootstrap.Mongo_Client.Disconnect(ctx)
+defer bootstrap.Redis_Client.Close()
+```
+
+Applications can import `pkg/db/mongo`, `pkg/db/redis`, or `pkg/breaker` directly when they need custom configuration or policies instead of bootstrap's shared defaults.
+
+## Circuit breakers
+
+Bootstrap uses the shared named breakers for MongoDB and Redis connections. Applications that need custom behavior can use `pkg/breaker` directly; breaker state changes are logged, and thresholds/timeouts are configured centrally.
 
 ## Lifecycle
 
