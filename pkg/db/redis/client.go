@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/husseinayyed/twivo-core/pkg/bootstrap"
+	"github.com/husseinayyed/twivo-core/pkg/breaker"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
@@ -18,7 +18,7 @@ func Connect(redisURL string) (*goredis.Client, error) {
 		return nil, errors.New("missing required environment variable REDIS_URL for Redis connection")
 	}
 
-	result, err := bootstrap.Breaker.Execute("Redis", func() (any, error) {
+	result, err := breaker.Group.Execute("Redis", func() (any, error) {
 		opt, err := goredis.ParseURL(redisHost)
 		if err != nil {
 			return nil, err
@@ -49,6 +49,6 @@ func Connect(redisURL string) (*goredis.Client, error) {
 		return nil, errors.New("redis breaker returned an invalid client type")
 	}
 
-	log.Info().Service("Redis").Msg("connected to Redis successfully")
+	log.Info().Str("service", "Redis").Msg("connected to Redis successfully")
 	return client, nil
 }
