@@ -2,27 +2,23 @@ package redis
 
 import (
 	"context"
-	"os"
+	"errors"
 	"time"
 
-	"github.com/husseinayyed/twivo-core/pkg/breaker"
+	"github.com/husseinayyed/twivo-core/pkg/bootstrap"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
 
-var (
-	RedisClient *goredis.Client
-	REDIS_URL   = os.Getenv("REDIS_URL")
-)
 
-func Connect() (*goredis.Client, error) {
-	redisHost := REDIS_URL
+func Connect(redisURL string) (*goredis.Client, error) {
+	redisHost := redisURL
 
 	if redisHost == "" {
-		log.Fatal().Msg("REDIS_URL environment variable must be set")
+		return nil, errors.New("missing required environment variable REDIS_URL for Redis connection")
 	}
 
-	result, err := breaker.Redis.Execute(func() (any, error) {
+	result, err := bootstrap.Breaker.Execute("Redis", func() (any, error) {
 		opt, err := goredis.ParseURL(redisHost)
 		if err != nil {
 			return nil, err
@@ -45,16 +41,14 @@ func Connect() (*goredis.Client, error) {
 		return client, nil
 	})
 	if err != nil {
-		log.Fatal().Err(err).Msg("error connecting to Redis")
-		os.Exit(1)
+		return nil, err
 	}
 
 	client, ok := result.(*goredis.Client)
 	if !ok {
-		log.Fatal().Msg("redis breaker returned an invalid client type")
+		return nil, errors.New("redis breaker returned an invalid client type")
 	}
 
-	RedisClient = client
-	log.Info().Msg("connected to Redis successfully")
-	return RedisClient, nil
+	log.Info().Service("Redis").Msg("connected to Redis successfully")
+	return client, nil
 }

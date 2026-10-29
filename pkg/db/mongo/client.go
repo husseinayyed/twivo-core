@@ -1,33 +1,27 @@
-package mongodb
+package mongo
 
 import (
 	"context"
-	"github.com/husseinayyed/twivo-core/pkg/breaker"
+	"errors"
+	"time"
+
+	"github.com/husseinayyed/twivo-core/pkg/boostrap"
 	"github.com/rs/zerolog/log"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
-	"os"
-	"time"
 )
 
-var (
-	MONGO_URL      = os.Getenv("MONGO_URL")
-	MONGO_USER     = os.Getenv("MONGO_USER")
-	MONGO_PASSWORD = os.Getenv("MONGO_PASSWORD")
-	Client           *mongo.Client
-)
 
-func Connect() {
+func Connect(MONGO_URL string, MONGO_USER string, MONGO_PASSWORD string) (*mongo.Client, error) {
 	if MONGO_URL == "" || MONGO_USER == "" || MONGO_PASSWORD == "" {
-		log.Fatal().Msg("one or more of MONGO_URL, MONGO_USER, MONGO_PASSWORD environment variables must be set")
+		
+		return nil, errors.New("missing required environment variables for MongoDB connection")
 	}
 
 	var client *mongo.Client
 	var err error
 
-	_, err = breaker.MongoDB.Execute(func() (any, error) {
+	_, err = boostrap.Breaker.Execute("Mongo",func() (any, error) {
 		credential := options.Credential{
 			Username: MONGO_USER,
 			Password: MONGO_PASSWORD,
@@ -49,11 +43,11 @@ func Connect() {
 		return client, nil
 	})
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to connect to MongoDB")
+		log.Service("MongoDB").Err(err).Msg("failed to connect to MongoDB")
 	}
 
 	// 🎉 If execution gets here, the connection is active and ready!
-	log.Info().Msg("successfully connected to MongoDB")
-	Client = client
-
+	log.Info().Service("MongoDB").Msg("successfully connected to MongoDB")
+	
+	return client, nil
 }
