@@ -23,7 +23,7 @@ services:
       target: dev
     logging: *dev-logging
     volumes:
-      - .:/app
+      - ..:/app
     env_file:
       - .env
 volumes:

@@ -19,8 +19,8 @@ services:
     expose:
       - "27017"
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=${MONGODB_USER}
-      - MONGO_INITDB_ROOT_PASSWORD=${MONGODB_PASSWORD}
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
     restart: unless-stopped
     networks:
       - twivo-network
@@ -28,10 +28,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: >
-      redis-server
-      --tcp-keepalive 60
-      --requirepass ${REDIS_PASS}
-      --appendonly yes
+      sh -c 'exec redis-server --tcp-keepalive 60 --requirepass "$${REDIS_PASS}" --appendonly yes'
     environment:
       REDIS_PASS: ${REDIS_PASS}
     healthcheck:
@@ -46,11 +43,12 @@ services:
 
   twivo-core:
     build:
-      context: .
+      context: ..
+      dockerfile: infra/Dockerfile
       target: dev
     restart: unless-stopped
     volumes:
-      - .:/app
+      - ..:/app
     env_file:
       - .env
     networks:
