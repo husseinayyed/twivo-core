@@ -24,20 +24,71 @@ LRU memory  ──miss──▶  Redis  ──miss──▶  MongoDB
     └──────── fill from Redis/MongoDB ────────┘
 ```
 
-A lookup helper can perform this complete flow and populate the cache layers. Its keys, TTLs, capacity, write policy, invalidation, batch behavior, and source behavior remain configurable. Lower-level MongoDB and Redis APIs remain available for custom workflows.
+The cache and database clients provide the building blocks for this flow. A unified lookup helper and its configurable keys, TTLs, capacity, write policy, invalidation, batch behavior, and source behavior are planned; until then, applications can use the lower-level MongoDB and Redis APIs directly.
 
 MongoDB remains the source of truth unless an application defines another source. Circuit breakers protect external operations and allow optional cache layers to degrade gracefully.
 
+## Twivo Core roadmap
+
+Twivo Core is intended to grow into a shared data-access and infrastructure toolkit. Planned capabilities include:
+
+- Simple `Set` and `Get` operations across the LRU, Redis, and MongoDB layers.
+- Batch reads and writes for efficient multi-item operations.
+- Query builders for composing common database queries without repeating boilerplate.
+- Cache invalidation, TTL, and write-through/write-back policies.
+- A persistent Cuckoo filter to track keys that may exist in the cache or database.
+- Additional reusable helpers for common application infrastructure needs.
+
+These are roadmap items; availability and API details may change as each feature is implemented. The lower-level database clients remain available for use in the meantime.
+
+### Planned application data workflow
+
+The goal is to let an application use one API for common data operations while Twivo Core coordinates the appropriate storage layers:
+
+1. **Initialize:** load application configuration, connect to required services, and prepare cache/index state. Startup must treat an absent or untrusted Cuckoo snapshot as incomplete; recovery and rebuild details are still open design work.
+2. **Read one item:** use a trusted negative filter result to return not found early. Otherwise check LRU, Redis, and then the configured source of truth. Promote successful lower-layer reads into the faster cache layers and update the key index.
+3. **Write one item:** validate and write to the configured source of truth, then update or invalidate cache entries and the key index. The exact write-through/write-back policy and behavior when a cache/index update fails are not yet fixed.
+4. **Read or write many items:** batch operations should reduce round trips, preserve per-item outcomes, and follow the same consistency rules as single-item operations.
+5. **Build queries:** a future query-builder API should compose filters, projections, sorting, and limits while retaining an escape hatch to native MongoDB/Redis APIs.
+6. **Shut down:** close external clients cleanly and attempt to persist the filter snapshot. Periodic snapshotting and shutdown persistence are proposals, not implemented guarantees.
+
+These steps describe the intended direction, not a currently available end-to-end API. Applications should use the existing lower-level clients until each higher-level operation is implemented and documented.
+
+### Cuckoo filter and key-existence hints
+
+The planned Cuckoo filter is a compact index of keys, not a store for values or a replacement for MongoDB. Its purpose is to avoid unnecessary cache and database reads when a key is known to be absent. The intended read path is:
+
+1. Ask the filter about the fully-qualified key.
+2. If the filter says the key is absent and the filter is known to be complete and current, return a not-found result without checking the caches or database.
+3. If the filter says the key may exist, check the LRU cache, then Redis, then MongoDB according to the configured data flow.
+4. When a record is found in the database, add its key to the filter and populate the configured cache layers.
+
+A positive filter result means “possibly present,” not “the record exists”; false positives are expected and must fall through to normal lookup. A negative result can only be used to skip reads when all relevant keys have been indexed and updates are being tracked reliably. The filter cannot establish that a key has never existed historically: deletion, missed writes, stale state, or an incomplete rebuild can make a key absent from the filter even if it existed before. MongoDB (or the configured source of truth) remains authoritative.
+
+Keys should be namespaced to avoid collisions between tenants, collections, or entity types—for example, including the collection/type and tenant identifier as part of the filter key. Insert, update, and delete paths must keep the filter consistent with the source of truth. The exact policy for deleting keys, concurrent writes, and coordinating filter updates with database transactions is still to be designed.
+
+#### Persistence and recovery (proposed)
+
+- Persist a timestamped filter snapshot about once per minute, and attempt a final save during graceful shutdown.
+- Store enough metadata to validate a snapshot on startup, such as a format version, save time, and filter configuration. The storage location and exact metadata format are undecided.
+- Treat missing, corrupt, incompatible, or too-old snapshots as unavailable; do not use them to make definitive negative decisions.
+- Consider rebuilding by scanning the source database and deriving the indexed keys. The scan strategy, startup behavior, and whether lookups can safely proceed while rebuilding have not been decided.
+- If persistence or filter updates fail, prefer a slower cache/database lookup over incorrectly returning “not found.”
+
+The one-minute interval and shutdown save are proposed behavior, not a current guarantee. Snapshot durability, write frequency, expiration/deletion handling, and recovery guarantees remain future design decisions.
+
 ## Components
 
-| Component | Responsibility |
-| --- | --- |
-| `pkg/breaker` | Shared process-wide circuit breakers |
-| `pkg/db/mongo` | MongoDB client lifecycle and operations |
-| `pkg/db/redis` | Redis client lifecycle and operations |
-| `pkg/cache` | Shared LRU and Redis cache abstractions |
-| `pkg/bootstrap` | Composition layer for initializing infrastructure |
-| `infra` | Docker, Compose, and environment configuration |
+| Component | Responsibility | Status |
+| --- | --- | --- |
+| `pkg/breaker` | Shared process-wide circuit breakers | Available |
+| `pkg/db/mongo` | MongoDB client lifecycle and operations | Available |
+| `pkg/db/redis` | Redis client lifecycle and operations | Available |
+| `pkg/twivo` | Core coordination and shared data-access APIs | Under development |
+| `pkg/cache` | Shared LRU/Redis cache workflows and Cuckoo key index | Planned |
+| Query builder | Compose common database query options | Planned; package/API TBD |
+| `pkg/bootstrap` | Composition layer for initializing infrastructure | Available |
+| `infra` | Docker, Compose, and environment configuration | Available |
 
 Packages stay focused on their own concern. Bootstrap code connects them for applications that prefer a single initialization point.
 
@@ -55,6 +106,8 @@ cp infra/.env.example infra/.env
 ```
 
 Configure `MONGO_USER`, `MONGO_PASSWORD`, `MONGO_URL`, `REDIS_PASS`, and `REDIS_URL`. `REDIS_URL` is the address only (for example, `redis://redis:6379/0`); bootstrap applies `REDIS_PASS` using Redis password authentication. Docker Compose uses the `mongodb` and `redis` service hostnames; local overrides may use `localhost`.
+
+These are the current connection settings. Cache capacities, per-operation TTLs, batch limits, query-builder options, and Cuckoo snapshot location/frequency will need explicit configuration as those APIs are designed; they are not established by this environment setup yet.
 
 MongoDB's Compose root user is authenticated against the `admin` database. The MongoDB image only creates that user when its data directory is first initialized; if credentials changed after the dev volume was created, the persisted database still has the old credentials. Update that database user or recreate the Mongo dev volume (this deletes its local data).
 
@@ -81,6 +134,8 @@ Set up the local environment file before running Compose targets:
 ```bash
 cp infra/.env.example infra/.env
 ```
+
+`make dev` starts the development services; it does not yet imply that the planned unified Set/Get, batch, query-builder, or persistent-filter workflows are active. Use the existing package-level client APIs for operations that are not implemented by Twivo Core yet.
 
 ## Add infrastructure in two steps
 
@@ -166,6 +221,8 @@ Infrastructure clients should:
 5. Execute external calls behind circuit breakers.
 6. Close cleanly during application shutdown.
 
+When persistent key-index support is implemented, its lifecycle will also need to restore and validate snapshots, distinguish complete from rebuilding state, periodically persist changes, and flush on graceful shutdown. If the index is incomplete or unavailable, reads must fall back to the cache/database path rather than treating an absent key as definitive.
+
 Reusable packages should return errors instead of terminating the process. Avoid mutable package-level clients and long-lived operations without context cancellation.
 
 ## Development guidelines
@@ -187,10 +244,12 @@ go test ./...
 
 Integration tests should isolate external services and skip cleanly when dedicated infrastructure is unavailable.
 
+As the planned data layer is added, tests should cover cache hits and misses, fallback ordering, batch partial failures, query construction, filter false positives, stale/corrupt snapshots, rebuild behavior, and consistency across successful writes and deletes.
+
 ## Status
 
-Twivo Core is under active development. Public APIs and configuration may evolve as shared infrastructure patterns become stable.
+Twivo Core is under active development. MongoDB, Redis, bootstrap, and breaker helpers are available; unified cache/data operations, batch APIs, query builders, and durable Cuckoo-filter workflows are roadmap items. Public APIs, persistence guarantees, and configuration may evolve as those designs become stable.
 
 ## License
 
-License details will be added when a project license is selected.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full text.
