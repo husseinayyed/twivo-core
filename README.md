@@ -43,7 +43,7 @@ Packages stay focused on their own concern. Bootstrap code connects them for app
 
 ## Requirements
 
-- Go 1.26 or newer
+- Go 1.27.3 or newer
 - Docker Engine and Docker Compose
 - Git
 - MongoDB and Redis for integration workflows

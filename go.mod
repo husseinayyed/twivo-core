@@ -1,6 +1,6 @@
 module github.com/husseinayyed/twivo-core
 
-go 1.26.5
+go 1.27.3
 
 require (
 	github.com/redis/go-redis/v9 v9.23.0
@@ -9,9 +9,13 @@ require (
 	go.mongodb.org/mongo-driver/v2 v2.9.2
 )
 
+require github.com/dgryski/go-metro v0.0.0-20200812162917-85c65e2d0165 // indirect
+
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/linvon/cuckoo-filter v0.4.0
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect

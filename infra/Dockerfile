@@ -1,5 +1,5 @@
 # --- Builder Stage ---
-FROM golang:1.26.5-alpine AS builder
+FROM golang:1.27.3-alpine AS builder
 WORKDIR /app
 COPY go.mod ./
 RUN go mod download
@@ -7,7 +7,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/main .
 
 # --- Development Stage ---
-FROM golang:1.26.5-alpine AS dev
+FROM golang:1.27.3-alpine AS dev
 WORKDIR /app
 RUN apk --no-cache add git bash curl
 COPY go.mod ./
