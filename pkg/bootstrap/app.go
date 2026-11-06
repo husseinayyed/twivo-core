@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-
-	"github.com/husseinayyed/twivo-core/pkg/breaker"
 	"github.com/husseinayyed/twivo-core/pkg/db/mongo"
 	"github.com/husseinayyed/twivo-core/pkg/db/redis"
 	goredis "github.com/redis/go-redis/v9"
@@ -14,7 +12,6 @@ import (
 	mongodb "go.mongodb.org/mongo-driver/v2/mongo"
 )
 var (
-	Breaker      = breaker.Group
 	Mongo_Client *mongodb.Client
 	Redis_Client *goredis.Client
 )
