@@ -44,8 +44,8 @@ These are roadmap items; availability and API details may change as each feature
 
 The current cache API provides single-key operations:
 
-1. **Write:** `twivo.SetCache(key, value, ttl)` updates the local shard and attempts a Redis write.
-2. **Read:** `twivo.GetCache(ctx, key)` checks the local shard, then Redis; a Redis hit is added to the local shard.
+1. **Write:** `twivo.SetCache(ctx, key, value, ttl)` updates the local shard and attempts a Redis write. The TTL is in seconds. Both cache operations use a three-second timeout while respecting cancellation or an earlier deadline from `ctx`; a nil context is treated as `context.Background()`.
+2. **Read:** `twivo.GetCache(ctx, key)` checks the local shard, then Redis; a Redis hit is added to the local shard. It returns the context error if the operation is canceled or times out.
 3. **Use MongoDB separately:** cache misses do not currently fall through to MongoDB, and there is no automatic database-to-cache population workflow.
 
 The TTL applies to the Redis entry; local LRU entries are managed in process memory. The shard manager also exposes lower-level `Read`, `Write`, `ReadLRU`, `WriteLRU`, `ReadCuckoo`, and `WriteCuckoo` operations from `pkg/shard`. Batch APIs, query builders, persistence, and coordinated cache invalidation remain future work.
