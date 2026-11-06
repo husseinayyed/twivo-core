@@ -9,11 +9,12 @@ import (
 
 func main() {
 	bootstrap.MustRun()
-	err := twivo.SetCache(context.Background(), "test", "value", 60)
+	ctx := context.Background()
+	err := twivo.SetCache(ctx, "test", "value", 60)
 	if err != nil {
 		panic(err)
 	}
-	val, err := twivo.GetCache(context.Background(), "test")
+	val, err := twivo.GetCache(ctx, "test")
 	if err != nil {
 		panic(err)
 	}
