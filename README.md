@@ -13,18 +13,18 @@ Twivo Core centralizes common Go infrastructure used across Twivo applications: 
 - Start new applications quickly while still bypassing helpers for custom strategies.
 - Keep database and resilience logic separate from application business logic.
 
-### Planned data flow
+### Current cache flow
 
 ```text
 Application
     │
     ▼
-LRU memory  ──miss──▶  Redis  ──miss──▶  MongoDB
-    ▲                    ▲                    │
-    └──────── fill from Redis/MongoDB ────────┘
+Twivo cache API ──miss──▶ Redis
+    │                       │
+    └──── populate local LRU on Redis hit
 ```
 
-The cache and database clients provide the building blocks for this flow. A unified lookup helper and its configurable keys, TTLs, capacity, write policy, invalidation, batch behavior, and source behavior are planned; until then, applications can use the lower-level MongoDB and Redis APIs directly.
+The `pkg/twivo` package exposes `SetCache` and `GetCache`. It checks the process-local sharded LRU first, then Redis on a miss, and stores Redis results back in the local cache. Writes update the local shard and attempt to write to Redis. MongoDB is not part of this cache lookup path; use its client APIs directly when database access or cache-miss population from MongoDB is required. The Cuckoo filters and LRU shards are in-memory and are not shared across application instances.
 
 MongoDB remains the source of truth unless an application defines another source. Circuit breakers protect external operations and allow optional cache layers to degrade gracefully.
 
@@ -32,42 +32,38 @@ MongoDB remains the source of truth unless an application defines another source
 
 Twivo Core is intended to grow into a shared data-access and infrastructure toolkit. Planned capabilities include:
 
-- Simple `Set` and `Get` operations across the LRU, Redis, and MongoDB layers.
 - Batch reads and writes for efficient multi-item operations.
 - Query builders for composing common database queries without repeating boilerplate.
-- Cache invalidation, TTL, and write-through/write-back policies.
-- A persistent Cuckoo filter to track keys that may exist in the cache or database.
+- Configurable cache invalidation and write-through/write-back policies.
+- Persistent Cuckoo-filter snapshots and recovery.
 - Additional reusable helpers for common application infrastructure needs.
 
 These are roadmap items; availability and API details may change as each feature is implemented. The lower-level database clients remain available for use in the meantime.
 
-### Planned application data workflow
+### Cache API behavior and scope
 
-The goal is to let an application use one API for common data operations while Twivo Core coordinates the appropriate storage layers:
+The current cache API provides single-key operations:
 
-1. **Initialize:** load application configuration, connect to required services, and prepare cache/index state. Startup must treat an absent or untrusted Cuckoo snapshot as incomplete; recovery and rebuild details are still open design work.
-2. **Read one item:** use a trusted negative filter result to return not found early. Otherwise check LRU, Redis, and then the configured source of truth. Promote successful lower-layer reads into the faster cache layers and update the key index.
-3. **Write one item:** validate and write to the configured source of truth, then update or invalidate cache entries and the key index. The exact write-through/write-back policy and behavior when a cache/index update fails are not yet fixed.
-4. **Read or write many items:** batch operations should reduce round trips, preserve per-item outcomes, and follow the same consistency rules as single-item operations.
-5. **Build queries:** a future query-builder API should compose filters, projections, sorting, and limits while retaining an escape hatch to native MongoDB/Redis APIs.
-6. **Shut down:** close external clients cleanly and attempt to persist the filter snapshot. Periodic snapshotting and shutdown persistence are proposals, not implemented guarantees.
+1. **Write:** `twivo.SetCache(key, value, ttl)` updates the local shard and attempts a Redis write.
+2. **Read:** `twivo.GetCache(ctx, key)` checks the local shard, then Redis; a Redis hit is added to the local shard.
+3. **Use MongoDB separately:** cache misses do not currently fall through to MongoDB, and there is no automatic database-to-cache population workflow.
 
-These steps describe the intended direction, not a currently available end-to-end API. Applications should use the existing lower-level clients until each higher-level operation is implemented and documented.
+The TTL applies to the Redis entry; local LRU entries are managed in process memory. The shard manager also exposes lower-level `Read`, `Write`, `ReadLRU`, `WriteLRU`, `ReadCuckoo`, and `WriteCuckoo` operations from `pkg/shard`. Batch APIs, query builders, persistence, and coordinated cache invalidation remain future work.
 
-### Cuckoo filter and key-existence hints
+### In-memory Cuckoo filters and key-existence hints
 
-The planned Cuckoo filter is a compact index of keys, not a store for values or a replacement for MongoDB. Its purpose is to avoid unnecessary cache and database reads when a key is known to be absent. The intended read path is:
+The shard manager maintains in-memory Cuckoo filters alongside its LRU shards. A filter is a compact key index, not a store for values or a replacement for MongoDB. The current cache read path uses it to avoid an LRU lookup when a key is not indexed:
 
 1. Ask the filter about the fully-qualified key.
-2. If the filter says the key is absent and the filter is known to be complete and current, return a not-found result without checking the caches or database.
-3. If the filter says the key may exist, check the LRU cache, then Redis, then MongoDB according to the configured data flow.
-4. When a record is found in the database, add its key to the filter and populate the configured cache layers.
+2. If the filter says the key is absent, the local shard lookup returns not found and the `pkg/twivo` API proceeds to Redis.
+3. If the filter says the key may exist, check the local LRU; on a miss, the `pkg/twivo` API proceeds to Redis.
+4. A successful cache write records the key in the local filter and stores the value in the local LRU.
 
-A positive filter result means “possibly present,” not “the record exists”; false positives are expected and must fall through to normal lookup. A negative result can only be used to skip reads when all relevant keys have been indexed and updates are being tracked reliably. The filter cannot establish that a key has never existed historically: deletion, missed writes, stale state, or an incomplete rebuild can make a key absent from the filter even if it existed before. MongoDB (or the configured source of truth) remains authoritative.
+A positive filter result means “possibly present,” not “the value exists”; false positives are expected and must fall through to the LRU lookup. The filters are process-local, are not persisted, and are not synchronized between replicas. Do not treat them as authoritative for database existence or use them as a replacement for the configured source of truth. MongoDB (or another application datastore) remains the authority for durable records.
 
-Keys should be namespaced to avoid collisions between tenants, collections, or entity types—for example, including the collection/type and tenant identifier as part of the filter key. Insert, update, and delete paths must keep the filter consistent with the source of truth. The exact policy for deleting keys, concurrent writes, and coordinating filter updates with database transactions is still to be designed.
+Keys should be namespaced to avoid collisions between tenants, collections, or entity types—for example, including the collection/type and tenant identifier as part of the cache key. The current API does not provide coordinated deletion or database transaction handling.
 
-#### Persistence and recovery (proposed)
+#### Persistence and recovery (not implemented)
 
 - Persist a timestamped filter snapshot about once per minute, and attempt a final save during graceful shutdown.
 - Store enough metadata to validate a snapshot on startup, such as a format version, save time, and filter configuration. The storage location and exact metadata format are undecided.
@@ -84,8 +80,8 @@ The one-minute interval and shutdown save are proposed behavior, not a current g
 | `pkg/breaker` | Shared process-wide circuit breakers | Available |
 | `pkg/db/mongo` | MongoDB client lifecycle and operations | Available |
 | `pkg/db/redis` | Redis client lifecycle and operations | Available |
-| `pkg/twivo` | Core coordination and shared data-access APIs | Under development |
-| `pkg/cache` | Shared LRU/Redis cache workflows and Cuckoo key index | Planned |
+| `pkg/twivo` | Single-key local LRU and Redis cache operations | Available; under development |
+| `pkg/shard` | Process-local sharded LRU caches and Cuckoo filters | Available; under development |
 | Query builder | Compose common database query options | Planned; package/API TBD |
 | `pkg/bootstrap` | Composition layer for initializing infrastructure | Available |
 | `infra` | Docker, Compose, and environment configuration | Available |
@@ -135,7 +131,7 @@ Set up the local environment file before running Compose targets:
 cp infra/.env.example infra/.env
 ```
 
-`make dev` starts the development services; it does not yet imply that the planned unified Set/Get, batch, query-builder, or persistent-filter workflows are active. Use the existing package-level client APIs for operations that are not implemented by Twivo Core yet.
+`make dev` starts the development services. The current `pkg/twivo` cache API uses the local shard and Redis; batch, query-builder, MongoDB fallback, and persistent-filter workflows are not implemented. Use the package-level database clients for operations outside the cache API.
 
 ## Add infrastructure in two steps
 
@@ -221,7 +217,7 @@ Infrastructure clients should:
 5. Execute external calls behind circuit breakers.
 6. Close cleanly during application shutdown.
 
-When persistent key-index support is implemented, its lifecycle will also need to restore and validate snapshots, distinguish complete from rebuilding state, periodically persist changes, and flush on graceful shutdown. If the index is incomplete or unavailable, reads must fall back to the cache/database path rather than treating an absent key as definitive.
+The current Cuckoo filters are in-memory only. Persistent key-index support will need to restore and validate snapshots, distinguish complete from rebuilding state, periodically persist changes, and flush on graceful shutdown. If the index is incomplete or unavailable, reads must fall back to the cache/database path rather than treating an absent key as definitive.
 
 Reusable packages should return errors instead of terminating the process. Avoid mutable package-level clients and long-lived operations without context cancellation.
 
@@ -248,7 +244,7 @@ As the planned data layer is added, tests should cover cache hits and misses, fa
 
 ## Status
 
-Twivo Core is under active development. MongoDB, Redis, bootstrap, and breaker helpers are available; unified cache/data operations, batch APIs, query builders, and durable Cuckoo-filter workflows are roadmap items. Public APIs, persistence guarantees, and configuration may evolve as those designs become stable.
+Twivo Core is under active development. MongoDB, Redis, bootstrap, and breaker helpers are available. Single-key local LRU/Redis cache operations and process-local Cuckoo-filter sharding are implemented; batch APIs, query builders, MongoDB cache fallback, and durable Cuckoo-filter workflows remain roadmap items. Public APIs, persistence guarantees, and configuration may evolve as those designs become stable.
 
 ## License
 
