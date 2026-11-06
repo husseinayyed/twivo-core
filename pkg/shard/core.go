@@ -87,6 +87,7 @@ func WriteCuckoo(key string) bool {
 	}
 	return true
 }
+
 /*
 	 ReadLRU retrieves a value from the LRU cache based on the provided key. It returns the value and a boolean indicating whether the key was found in the cache. If the cache is empty, it will return nil and false.
 		- Key: The key to be looked up in the LRU cache.
@@ -106,14 +107,14 @@ func ReadLRU(key string) (any, bool) {
 	}
 	return nil, false
 }
+
 /*
 	 WriteLRU adds a key-value pair to the LRU cache. If the cache is full, it will create a new shard and add the pair to it.
 		- Key: The key to be added to the LRU cache.
 		- Value: The value to be added to the LRU cache.
 		- Force: A boolean indicating whether to force the addition of the key-value pair even if it already exists in the cache.
-
 */
-func WriteLRU(key string, value any,force bool) {
+func WriteLRU(key string, value any, force bool) {
 	Shard.mutex.Lock()
 	defer Shard.mutex.Unlock()
 	if Shard.lastCount >= 100000 {
@@ -131,4 +132,28 @@ func WriteLRU(key string, value any,force bool) {
 			}
 		}
 	}
+}
+
+/*
+	 Read retrieves a value from the LRU cache based on the provided key. It first checks if the key exists in the cuckoo filter. If it does, it will then look up the value in the LRU cache. If the key does not exist in the cuckoo filter, it will return nil and false.
+		- Key: The key to be looked up in the LRU cache.
+		- Returns: The value associated with the key (if found) and a boolean indicating whether the key exists in the cache (true) or not (false).
+*/
+func Read(key string, value any) (any, bool) {
+	exists := ReadCuckoo(key)
+	if !exists {
+		return nil, false
+	}
+	return ReadLRU(key)
+}
+
+/*
+	 Write adds a key-value pair to both the cuckoo filter and the LRU cache. It first checks if the key already exists in the cuckoo filter. If it does, it will not add the key again. If it doesn't exist, it will add the key to both the cuckoo filter and the LRU cache.
+		- Key: The key to be added.
+		- Value: The value to be associated with the key.
+		- Force: A boolean indicating whether to force the addition of the key-value pair even if it already exists in the cache.
+*/
+func Write(key string, value any, force bool) {
+	WriteCuckoo(key)
+	WriteLRU(key, value, force)
 }
