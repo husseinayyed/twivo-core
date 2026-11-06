@@ -139,7 +139,7 @@ func WriteLRU(key string, value any, force bool) {
 		- Key: The key to be looked up in the LRU cache.
 		- Returns: The value associated with the key (if found) and a boolean indicating whether the key exists in the cache (true) or not (false).
 */
-func Read(key string, value any) (any, bool) {
+func Read(key string) (any, bool) {
 	exists := ReadCuckoo(key)
 	if !exists {
 		return nil, false
