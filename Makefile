@@ -50,10 +50,10 @@ shell-test: ## Open a Bash shell in a one-off test app container
 build: build-prod ## Build the production image
 
 build-dev: ## Build the development image
-	docker build --file $(DOCKERFILE) --target dev --tag $(IMAGE):dev .
+	sudo docker build --file $(DOCKERFILE) --target dev --tag $(IMAGE):dev .
 
 build-test: ## Build the test (development) image
-	docker build --file $(DOCKERFILE) --target dev --tag $(IMAGE):test .
+	sudo docker build --file $(DOCKERFILE) --target dev --tag $(IMAGE):test .
 
 build-prod: ## Build the production image
-	docker build --file $(DOCKERFILE) --target prod --tag $(IMAGE):prod .
+	sudo docker build --file $(DOCKERFILE) --target prod --tag $(IMAGE):prod .
