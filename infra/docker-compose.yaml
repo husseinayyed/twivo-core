@@ -9,13 +9,13 @@ services:
     networks:
       - twivo-network
   mongodb:
-    image: mongo:latest
+    image: mongo:9.0
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD-SHELL", "mongosh -u $$MONGO_INITDB_ROOT_USERNAME -p $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --quiet --eval 'db.adminCommand(\"ping\").ok' | grep 1"]
+      interval: 10s
+      timeout: 5s
       retries: 5
-
+      start_period: 30s
     expose:
       - "27017"
     environment:
@@ -24,8 +24,9 @@ services:
     restart: unless-stopped
     networks:
       - twivo-network
+
   redis:
-    image: redis:7-alpine
+    image: redis:8.8.4-alpine
     restart: unless-stopped
     command: >
       sh -c 'exec redis-server --tcp-keepalive 60 --requirepass "$${REDIS_PASS}" --appendonly yes'
