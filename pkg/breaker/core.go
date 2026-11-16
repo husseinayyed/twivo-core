@@ -5,22 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
+	"sync"
 	"github.com/rs/zerolog/log"
 	"github.com/sony/gobreaker/v2"
 )
 
 // Registry is a collection of circuit breakers for external dependencies.
 type Registry struct {
+	mutex    sync.RWMutex
 	breakers map[string]*gobreaker.CircuitBreaker[any]
 }
 
 // Group is the default process-wide registry used by infrastructure clients.
-var Group = NewGroup()
+var Group = NewGroup(&Registry{})
 
 // NewGroup creates a new circuit breaker registry with default settings for the app's external dependencies.
-func NewGroup() *Registry {
+func NewGroup(r *Registry) *Registry {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
 	group := &Registry{breakers: make(map[string]*gobreaker.CircuitBreaker[any])}
+	
     group.New("Mongo", 60*time.Second, 30*time.Second)
     group.New("Redis", 30*time.Second, 15*time.Second)
     return group
@@ -28,7 +32,9 @@ func NewGroup() *Registry {
 
 // Execute runs fn under the protection of the named circuit breaker.
 func (r *Registry) Execute(service string, fn func() (any, error)) (any, error) {
+	r.mutex.RLock()
 	cb, ok := r.breakers[service]
+	r.mutex.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("breaker: no circuit registered for service %q", service)
 	}
@@ -42,7 +48,9 @@ func (r *Registry) Execute(service string, fn func() (any, error)) (any, error) 
 
 // State returns the current state of a service's breaker.
 func (r *Registry) State(service string) gobreaker.State {
+	r.mutex.RLock()
 	cb, ok := r.breakers[service]
+	r.mutex.RUnlock()
 	if !ok {
 		return gobreaker.StateClosed
 	}
@@ -51,6 +59,8 @@ func (r *Registry) State(service string) gobreaker.State {
 
 // New registers a circuit breaker with shared defaults.
 func (r *Registry) New(name string, interval, timeout time.Duration) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
 	r.breakers[name] = gobreaker.NewCircuitBreaker[any](gobreaker.Settings{
 		Name:         name,
 		MaxRequests:  3,
