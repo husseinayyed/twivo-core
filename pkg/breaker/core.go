@@ -17,12 +17,10 @@ type Registry struct {
 }
 
 // Group is the default process-wide registry used by infrastructure clients.
-var Group = NewGroup(&Registry{})
+var Group = NewGroup()
 
 // NewGroup creates a new circuit breaker registry with default settings for the app's external dependencies.
-func NewGroup(r *Registry) *Registry {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
+func NewGroup() *Registry {
 	group := &Registry{breakers: make(map[string]*gobreaker.CircuitBreaker[any])}
 	
     group.New("Mongo", 60*time.Second, 30*time.Second)
