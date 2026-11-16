@@ -1,10 +1,12 @@
 package bootstrap
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
+
 	"github.com/husseinayyed/twivo-core/pkg/db/mongo"
 	"github.com/husseinayyed/twivo-core/pkg/db/redis"
 	goredis "github.com/redis/go-redis/v9"
@@ -45,11 +47,15 @@ func Run() error {
 	// Initialize MongoDB connection
 	Mongo_Client, err = mongo.Connect(MONGO_URL, MONGO_USER, MONGO_PASSWORD)
 	if err != nil {
+		log.Error().Err(err).Msg("failed to initialize MongoDB")
 		return fmt.Errorf("initialize MongoDB: %w", err)
 	}
 	// Initialize Redis connection
 	Redis_Client, err = redis.Connect(REDIS_URL)
 	if err != nil {
+		Mongo_Client.Disconnect(context.Background())
+
+		log.Error().Err(err).Msg("failed to initialize Redis")
 		return fmt.Errorf("initialize Redis: %w", err)
 	}
 	return nil
