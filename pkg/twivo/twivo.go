@@ -7,6 +7,7 @@ import (
 	"github.com/husseinayyed/twivo-core/pkg/bootstrap"
 	"github.com/husseinayyed/twivo-core/pkg/breaker"
 	"github.com/husseinayyed/twivo-core/pkg/shard"
+	"errors"
 )
 
 const cacheOperationTimeout = 3 * time.Second
@@ -78,7 +79,7 @@ func GetCache(ctx context.Context, key string) (any, bool, error) {
 
 		value, found, err := breaker.Group.Execute("Redis", func() (any, bool, error) {
 			 val, err := bootstrap.Redis_Client.Get(ctx, key).Result()
-			 if error.Is(err, goredis.Nil) {
+			 if errors.Is(err, goredis.Nil) {
 				return nil, false, nil
 			 }
 			 if err != nil {
