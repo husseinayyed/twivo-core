@@ -71,27 +71,27 @@ func SetCache(ctx context.Context, key string, value any, ttl int) error {
 			- found: A boolean indicating whether the key was found in the cache.
 			- error: An error if the operation fails; otherwise, nil.
 		*/
-func GetCache(ctx context.Context, key string) (any, bool, error) {
-	return runWithContext(ctx, cacheOperationTimeout, func(ctx context.Context) (any, bool, error) {
+func GetCache(ctx context.Context, key string) (any, error) {
+	return runWithContext(ctx, cacheOperationTimeout, func(ctx context.Context) (any, error) {
 		if value, found := shard.Read(key); found {
-			return value, true, nil
+			return value, nil
 		}
 
-		value, found, err := breaker.Group.Execute("Redis", func() (any, bool, error) {
+		value, err := breaker.Group.Execute("Redis", func() (any, error) {
 			 val, err := bootstrap.Redis_Client.Get(ctx, key).Result()
 			 if errors.Is(err, goredis.Nil) {
-				return nil, false, nil
+				return nil, nil
 			 }
 			 if err != nil {
-				return nil, false, err
+				return nil, err
 			 }
-			 return val, true, nil
+			 return val, nil
 		})
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 
 		shard.Write(key, value, false)
-		return value, found, nil
+		return value, nil
 	})
 }
