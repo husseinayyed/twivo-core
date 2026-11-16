@@ -12,7 +12,7 @@ import (
 )
 
 func TestRegistryExecute(t *testing.T) {
-	registry := NewGroup(&Registry{})
+	registry := NewGroup()
 	registry.New("test", time.Second, time.Second)
 
 	result, err := registry.Execute("test", func() (any, error) {
@@ -46,7 +46,7 @@ func TestRegistryExecute(t *testing.T) {
 }
 
 func TestRegistryState(t *testing.T) {
-	registry := NewGroup(&Registry{})
+	registry := NewGroup()
 	if state := registry.State("missing"); state != gobreaker.StateClosed {
 		t.Fatalf("State for an unregistered service = %v, want %v", state, gobreaker.StateClosed)
 	}
@@ -58,7 +58,7 @@ func TestRegistryState(t *testing.T) {
 }
 
 func TestRegistryConcurrentAccess(t *testing.T) {
-	registry := NewGroup(&Registry{})
+	registry := NewGroup()
 	registry.New("test", time.Second, time.Second)
 
 	const workers = 32
