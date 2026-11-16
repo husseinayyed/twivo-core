@@ -18,6 +18,8 @@ test: ## Run Go tests in Docker with ephemeral MongoDB and Redis
 dev: ## Start the development app, MongoDB, and Redis
 	$(COMPOSE_DEV) up -d --build mongodb redis twivo-core
 
+dev-up: ## Start the development app, MongoDB, and Redis without rebuilding
+	$(COMPOSE_DEV) up -d mongodb redis twivo-core
 prod: ## Start the production app, MongoDB, and Redis
 	$(COMPOSE_PROD) up -d --build mongodb redis twivo-core
 
