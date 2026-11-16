@@ -3,7 +3,7 @@ package twivo
 import (
 	"context"
 	"time"
-
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/husseinayyed/twivo-core/pkg/bootstrap"
 	"github.com/husseinayyed/twivo-core/pkg/breaker"
 	"github.com/husseinayyed/twivo-core/pkg/shard"
@@ -66,22 +66,31 @@ func SetCache(ctx context.Context, key string, value any, ttl int) error {
 			- ctx: The context to use for the operation. If nil, a background context is used.
 			- key: The key to retrieve from the cache.
 		- Returns:
-			- The value associated with the key (if found) and an error if the operation fails; otherwise, nil.
-*/
-func GetCache(ctx context.Context, key string) (any, error) {
-	return runWithContext(ctx, cacheOperationTimeout, func(ctx context.Context) (any, error) {
+			- value: The value associated with the key, if found.
+			- found: A boolean indicating whether the key was found in the cache.
+			- error: An error if the operation fails; otherwise, nil.
+		*/
+func GetCache(ctx context.Context, key string) (any, bool, error) {
+	return runWithContext(ctx, cacheOperationTimeout, func(ctx context.Context) (any, bool, error) {
 		if value, found := shard.Read(key); found {
-			return value, nil
+			return value, true, nil
 		}
 
-		value, err := breaker.Group.Execute("Redis", func() (any, error) {
-			return bootstrap.Redis_Client.Get(ctx, key).Result()
+		value, found, err := breaker.Group.Execute("Redis", func() (any, bool, error) {
+			 val, err := bootstrap.Redis_Client.Get(ctx, key).Result()
+			 if error.Is(err, goredis.Nil) {
+				return nil, false, nil
+			 }
+			 if err != nil {
+				return nil, false, err
+			 }
+			 return val, true, nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 
 		shard.Write(key, value, false)
-		return value, nil
+		return value, found, nil
 	})
 }

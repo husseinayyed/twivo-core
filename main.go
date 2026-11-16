@@ -14,11 +14,13 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	val, err := twivo.GetCache(ctx, "test")
+	val, found, err := twivo.GetCache(ctx, "test")
 	if err != nil {
 		panic(err)
 	}
-	println(val.(string))	
+	if found {
+		println(val.(string))
+	}
 	for {
 
 	}
