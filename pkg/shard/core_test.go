@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestReadCuckoo(t *testing.T) {
+func TestReadLRU(t *testing.T) {
 	const key = "testKey"
 	const value = "testValue"
 	WriteLRU(key, value, false)
