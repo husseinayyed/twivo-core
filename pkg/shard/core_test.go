@@ -10,12 +10,12 @@ func TestReadLRU(t *testing.T) {
 	const value = "testValue"
 	WriteLRU(key, value, false)
 	if _, ok := ReadLRU(key); !ok {
-		t.Errorf("expected %q to be found in cuckoo filter", key)
+		t.Errorf("expected %q to be found in LRU cache", key)
 	}
 
 	const missing = "nonExistentKey"
 	if _, ok := ReadLRU(missing); ok {
-		t.Errorf("expected %q not to be found in cuckoo filter", missing)
+		t.Errorf("expected %q not to be found in LRU cache", missing)
 	}
 
 	const n = 100000
@@ -36,7 +36,7 @@ func TestReadLRU(t *testing.T) {
 		}
 	}
 	if missingCount > 0 {
-		t.Errorf("%d of %d inserted keys were not found (filter may be full or evicting)", missingCount, n)
+		t.Errorf("%d of %d inserted keys were not found (LRU cache may be full or evicting)", missingCount, n)
 	}
 }
 func TestReadCuckoo(t *testing.T) {
