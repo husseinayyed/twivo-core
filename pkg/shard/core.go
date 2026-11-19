@@ -123,13 +123,36 @@ func WriteLRU(key string, value any, force bool) {
 		appendShard()
 	}
 	if Shard.lastId == 0 {
+		if ok := Shard.lru[Shard.lastId].Contains(key); ok && !force {
+			return
+		}
+		if ok := Shard.lru[Shard.lastId].Contains(key); ok && force {
+			Shard.lru[Shard.lastId].Remove(key)
+			Shard.lru[Shard.lastId].Add(key, value)
+			return
+		}
 		Shard.lru[Shard.lastId].Add(key, value)
+		Shard.lastCount++
 	} else {
-		for i := 0; i <= Shard.lastId; i++ {
-			if _, ok := Shard.lru[i].Get(key); !ok || force {
-				Shard.lru[i].Add(key, value)
-				return
+		for i := 0; i <= Shard.lastId-1; i++ {
+			if _, ok := Shard.lru[i].Get(key); ok {
+				Shard.lru[i].Remove(key)
+				continue
 			}
+		}
+		ok := Shard.lru[Shard.lastId].Contains(key)
+		if ok && !force {
+			return
+		}
+		if ok && force {
+			Shard.lru[Shard.lastId].Remove(key)
+			Shard.lru[Shard.lastId].Add(key, value)
+			return
+		}
+		if !ok {
+			Shard.lru[Shard.lastId].Add(key, value)
+			Shard.lastCount++
+			return
 		}
 	}
 }
