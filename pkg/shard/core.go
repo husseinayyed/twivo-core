@@ -75,13 +75,25 @@ func WriteCuckoo(key string) bool {
 		appendShard()
 	}
 	if Shard.lastId == 0 {
+		if ok := Shard.cuckoo[0].Contain([]byte(key)); ok {
+			return true
+		}
 		Shard.cuckoo[0].Add([]byte(key))
+		return false
 	} else {
-
 		for i := 0; i <= Shard.lastId; i++ {
-			if !Shard.cuckoo[i].Contain([]byte(key)) {
-				Shard.cuckoo[i].Add([]byte(key))
-				return false
+			if Shard.cuckoo[i].Contain([]byte(key)) {
+				if i == Shard.lastId {
+					return true
+				}
+				continue
+
+			} else {
+				if i == Shard.lastId {
+					Shard.cuckoo[Shard.lastId].Add([]byte(key))
+					return false
+				}
+				continue
 			}
 		}
 	}
