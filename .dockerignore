@@ -1,0 +1,22 @@
+.git
+.gitignore
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Build and test artifacts
+bin/
+dist/
+tmp/
+vendor/
+*.test
+*.out
+coverage*.*
+*.log
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

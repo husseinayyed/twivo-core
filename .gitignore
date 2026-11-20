@@ -1,0 +1,21 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Go build and test artifacts
+/bin/
+/dist/
+/tmp/
+/vendor/
+*.test
+*.out
+coverage*.*
+
+# Logs
+*.log
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
