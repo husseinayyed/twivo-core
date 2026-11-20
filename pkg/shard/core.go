@@ -83,11 +83,7 @@ func WriteCuckoo(key string) bool {
 	} else {
 		for i := 0; i <= Shard.lastId; i++ {
 			if Shard.cuckoo[i].Contain([]byte(key)) {
-				if i == Shard.lastId {
-					return true
-				}
-				continue
-
+				return true
 			} else {
 				if i == Shard.lastId {
 					Shard.cuckoo[Shard.lastId].Add([]byte(key))
