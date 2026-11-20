@@ -1,251 +1,248 @@
 # Twivo Core
 
-**Shared infrastructure and reusable helpers for the Twivo ecosystem.**
+Shared infrastructure for Twivo Go applications.
 
-Twivo Core centralizes common Go infrastructure used across Twivo applications: MongoDB, Redis, circuit breakers, cache orchestration, configuration, and containerized environments. It combines complete, ready-to-use workflows with low-level building blocks, so applications save integration time without losing the ability to configure or control behavior manually.
+Twivo Core provides reusable infrastructure for MongoDB, Redis, caching, sharding, and circuit breakers. It centralizes common backend components so applications can share consistent behavior without repeatedly implementing and maintaining the same infrastructure.
 
-## Why Twivo Core?
+## Features
 
-- Build complete workflows once and reuse them across every Twivo application.
-- Update shared infrastructure from one package instead of many repositories.
-- Apply consistent connection, timeout, retry, cache, logging, and circuit-breaker behavior.
-- Support fast, process-local LRU access → shared Redis caching → durable MongoDB reads.
-- Start new applications quickly while still bypassing helpers for custom strategies.
-- Keep database and resilience logic separate from application business logic.
+- **Bootstrap:** Centralized initialization and access to shared MongoDB and Redis clients.
+- **Circuit Breakers:** Shared, named circuit breakers for dependency protection.
+- **Two-Layer Caching:** LRU caching backed by Redis.
+- **Cuckoo Filters:** Compact, in-memory key-existence hints for efficient cache lookups.
+- **Shard System:** Manages multiple Cuckoo filter shards and their capacity.
+- **Cross-Instance Synchronization:** Keeps cache data synchronized between application instances.
+- **Automated Testing:** Implemented components and behavior covered by automated tests.
+- **Modular Architecture:** Use the high-level API or individual packages independently.
 
-### Current cache flow
+## Before and After Twivo Core
 
-```text
-Application
-    │
-    ▼
-Twivo cache API ──miss──▶ Redis
-    │                       │
-    └──── populate local LRU on Redis hit
-```
+**Before Twivo Core**
 
-The `pkg/twivo` package exposes `SetCache` and `GetCache`. It checks the process-local sharded LRU first, then Redis on a miss, and stores Redis results back in the local cache. Writes update the local shard and attempt to write to Redis. MongoDB is not part of this cache lookup path; use its client APIs directly when database access or cache-miss population from MongoDB is required. The Cuckoo filters and LRU shards are in-memory and are not shared across application instances.
+Every application independently implements and maintains its infrastructure:
 
-MongoDB remains the source of truth unless an application defines another source. Circuit breakers protect external operations and allow optional cache layers to degrade gracefully.
+- MongoDB and Redis initialization and connection management.
+- Environment configuration and error handling.
+- Cache lookup, invalidation, and expiration logic.
+- Local caching and Redis fallback.
+- Key-existence checks and caching optimizations.
+- Sharding and Cuckoo filter management.
+- Circuit-breaker configuration and management.
+- Infrastructure testing and maintenance.
 
-## Twivo Core roadmap
+**After Twivo Core**
 
-Twivo Core is intended to grow into a shared data-access and infrastructure toolkit. Planned capabilities include:
+Infrastructure is centralized into reusable, tested packages:
 
-- Batch reads and writes for efficient multi-item operations.
-- Query builders for composing common database queries without repeating boilerplate.
-- Configurable cache invalidation and write-through/write-back policies.
-- Persistent Cuckoo-filter snapshots and recovery.
-- Additional reusable helpers for common application infrastructure needs.
+- **Bootstrap:** Shared MongoDB and Redis clients with centralized initialization.
+- **Cuckoo Filters:** Compact, in-memory key-existence hints that help avoid unnecessary cache lookups.
+- **Shard System:** Organizes Cuckoo filters into multiple shards, managing capacity and rotating to new shards when necessary.
+- **Sharded LRU:** Fast local caching with efficient memory access.
+- **Redis Fallback:** Retrieves values on local cache misses and populates the local LRU on Redis hits.
+- **Cross-Instance Synchronization:** Keeps cache data synchronized between application instances.
+- **Circuit Breakers:** Shared, named breakers for dependency protection.
+- **Automated Testing:** Implemented components and behavior are covered by automated tests.
+- **Modular Architecture:** Use the high-level API or individual packages when more control is needed.
 
-These are roadmap items; availability and API details may change as each feature is implemented. The lower-level database clients remain available for use in the meantime.
-
-### Cache API behavior and scope
-
-The current cache API provides single-key operations:
-
-1. **Write:** `twivo.SetCache(ctx, key, value, ttl)` updates the local shard and attempts a Redis write. The TTL is in seconds. Both cache operations use a three-second timeout while respecting cancellation or an earlier deadline from `ctx`; a nil context is treated as `context.Background()`.
-2. **Read:** `twivo.GetCache(ctx, key)` checks the local shard, then Redis; a Redis hit is added to the local shard. It returns the context error if the operation is canceled or times out.
-3. **Use MongoDB separately:** cache misses do not currently fall through to MongoDB, and there is no automatic database-to-cache population workflow.
-
-The TTL applies to the Redis entry; local LRU entries are managed in process memory. The shard manager also exposes lower-level `Read`, `Write`, `ReadLRU`, `WriteLRU`, `ReadCuckoo`, and `WriteCuckoo` operations from `pkg/shard`. Batch APIs, query builders, persistence, and coordinated cache invalidation remain future work.
-
-### In-memory Cuckoo filters and key-existence hints
-
-The shard manager maintains in-memory Cuckoo filters alongside its LRU shards. A filter is a compact key index, not a store for values or a replacement for MongoDB. The current cache read path uses it to avoid an LRU lookup when a key is not indexed:
-
-1. Ask the filter about the fully-qualified key.
-2. If the filter says the key is absent, the local shard lookup returns not found and the `pkg/twivo` API proceeds to Redis.
-3. If the filter says the key may exist, check the local LRU; on a miss, the `pkg/twivo` API proceeds to Redis.
-4. A successful cache write records the key in the local filter and stores the value in the local LRU.
-
-A positive filter result means “possibly present,” not “the value exists”; false positives are expected and must fall through to the LRU lookup. The filters are process-local, are not persisted, and are not synchronized between replicas. Do not treat them as authoritative for database existence or use them as a replacement for the configured source of truth. MongoDB (or another application datastore) remains the authority for durable records.
-
-Keys should be namespaced to avoid collisions between tenants, collections, or entity types—for example, including the collection/type and tenant identifier as part of the cache key. The current API does not provide coordinated deletion or database transaction handling.
-
-#### Persistence and recovery (not implemented)
-
-- Persist a timestamped filter snapshot about once per minute, and attempt a final save during graceful shutdown.
-- Store enough metadata to validate a snapshot on startup, such as a format version, save time, and filter configuration. The storage location and exact metadata format are undecided.
-- Treat missing, corrupt, incompatible, or too-old snapshots as unavailable; do not use them to make definitive negative decisions.
-- Consider rebuilding by scanning the source database and deriving the indexed keys. The scan strategy, startup behavior, and whether lookups can safely proceed while rebuilding have not been decided.
-- If persistence or filter updates fail, prefer a slower cache/database lookup over incorrectly returning “not found.”
-
-The one-minute interval and shutdown save are proposed behavior, not a current guarantee. Snapshot durability, write frequency, expiration/deletion handling, and recovery guarantees remain future design decisions.
-
-## Components
-
-| Component | Responsibility | Status |
-| --- | --- | --- |
-| `pkg/breaker` | Shared process-wide circuit breakers | Available |
-| `pkg/db/mongo` | MongoDB client lifecycle and operations | Available |
-| `pkg/db/redis` | Redis client lifecycle and operations | Available |
-| `pkg/twivo` | Single-key local LRU and Redis cache operations | Available; under development |
-| `pkg/shard` | Process-local sharded LRU caches and Cuckoo filters | Available; under development |
-| Query builder | Compose common database query options | Planned; package/API TBD |
-| `pkg/bootstrap` | Composition layer for initializing infrastructure | Available |
-| `infra` | Docker, Compose, and environment configuration | Available |
-
-Packages stay focused on their own concern. Bootstrap code connects them for applications that prefer a single initialization point.
+**The result:** Less duplicated infrastructure, less boilerplate, consistent behavior across applications, and more development time spent building product features.
 
 ## Requirements
 
-- Go 1.27.3 or newer
-- Docker Engine and Docker Compose
-- Git
-- MongoDB and Redis for integration workflows
+- Go 1.27.3 or later.
+- Docker Engine and Docker Compose.
+- Git.
+
+MongoDB and Redis are required for workflows that use those services.
+
+## Quick Start
+
+Clone the repository:
+
+```bash
+git clone https://github.com/husseinayyed/twivo-core.git
+cd twivo-core
+```
+
+Configure the environment:
+
+```bash
+cp infra/.env.example infra/.env
+```
+
+Start the development environment:
+
+```bash
+make dev
+```
 
 ## Configuration
 
-```bash
-cp infra/.env.example infra/.env
-```
+Environment variables are loaded from `infra/.env`.
 
-Configure `MONGO_USER`, `MONGO_PASSWORD`, `MONGO_URL`, `REDIS_PASS`, and `REDIS_URL`. `REDIS_URL` is the address only (for example, `redis://redis:6379/0`); bootstrap applies `REDIS_PASS` using Redis password authentication. Docker Compose uses the `mongodb` and `redis` service hostnames; local overrides may use `localhost`.
+| Variable | Description |
+|---|---|
+| `MONGO_USER` | MongoDB username |
+| `MONGO_PASSWORD` | MongoDB password |
+| `MONGO_URL` | MongoDB connection URL |
+| `REDIS_PASS` | Redis password |
+| `REDIS_URL` | Redis address |
 
-These are the current connection settings. Cache capacities, per-operation TTLs, batch limits, query-builder options, and Cuckoo snapshot location/frequency will need explicit configuration as those APIs are designed; they are not established by this environment setup yet.
+When using Docker Compose, use the service hostnames `mongodb` and `redis` where appropriate. For services running directly on your machine, use `localhost`.
 
-MongoDB's Compose root user is authenticated against the `admin` database. The MongoDB image only creates that user when its data directory is first initialized; if credentials changed after the dev volume was created, the persisted database still has the old credentials. Update that database user or recreate the Mongo dev volume (this deletes its local data).
+`REDIS_URL` specifies the Redis address. Bootstrap applies the Redis password separately.
 
-Never commit real credentials. Inject production secrets through the deployment platform or a secret manager.
+**MongoDB note:** The Compose configuration initializes its root user against the `admin` authentication database. MongoDB initializes credentials when the data volume is first created. Changing credentials in `.env` does not automatically update an existing volume.
 
-## Development workflow
+Keep credentials out of version control.
 
-A Makefile provides the primary workflow:
+## Bootstrap
 
-```text
-make dev        Start development app, MongoDB, and Redis
-make test       Run tests in Docker with temporary databases
-make shell      Enter the development app container
-make build-dev  Build the development image
-make build-test Build the test image
-make build-prod Build the production image
-make prod       Start the production app and databases
-make logs       Follow development logs
-make down       Stop development containers
-```
+Use the bootstrap package to initialize shared infrastructure.
 
-Set up the local environment file before running Compose targets:
+`bootstrap.Run()` returns an error if initialization fails. Alternatively, `bootstrap.MustRun()` provides fail-fast initialization.
 
-```bash
-cp infra/.env.example infra/.env
-```
+Bootstrap exposes shared clients:
 
-`make dev` starts the development services. The current `pkg/twivo` cache API uses the local shard and Redis; batch, query-builder, MongoDB fallback, and persistent-filter workflows are not implemented. Use the package-level database clients for operations outside the cache API.
+- `bootstrap.Mongo_Client`
+- `bootstrap.Redis_Client`
+- `bootstrap.Breaker`
 
-## Add infrastructure in two steps
+Reuse initialized clients instead of creating new connections for every operation. Close clients during application shutdown according to their respective package APIs.
 
-No need to wire MongoDB, Redis, and circuit breakers by hand. Import bootstrap, then initialize the shared clients:
+## Caching
 
-```go
-import "github.com/husseinayyed/twivo-core/pkg/bootstrap"
+The `pkg/twivo` package provides the high-level cache API.
 
-func main() {
-    bootstrap.MustRun()
-    // Use bootstrap.Mongo_Client, bootstrap.Redis_Client, and bootstrap.Breaker.
-}
-```
+- `twivo.SetCache(ctx, key, value, ttl)`
+- `twivo.GetCache(ctx, key)`
 
-`MustRun()` reads `MONGO_URL`, `MONGO_USER`, `MONGO_PASSWORD`, `REDIS_URL`, and `REDIS_PASS`, connects to MongoDB and Redis, and configures the shared circuit breakers. It exits with a logged error if startup fails, which is convenient for a service entry point. Set those variables in your deployment environment before starting the application.
+The TTL is specified in seconds.
 
-After initialization, access the clients from bootstrap. For example, select a MongoDB database and use the Redis client:
+### Cache Read Flow
 
-```go
-import (
-    "context"
-    "time"
+1. Check the Cuckoo filter when applicable.
+2. Use the local sharded LRU for cache lookups.
+3. On a local cache miss, retrieve the value from Redis.
+4. On a Redis hit, populate the local LRU.
+5. Return the result.
 
-    "github.com/husseinayyed/twivo-core/pkg/bootstrap"
-)
+Cache writes update the local cache and Redis backing layer.
 
-func run() error {
-    if err := bootstrap.Run(); err != nil {
-        return err
-    }
-    defer bootstrap.Mongo_Client.Disconnect(context.Background())
-    defer bootstrap.Redis_Client.Close()
+### Cache Behavior
 
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
+- Redis provides the shared backing layer.
+- Cache data is synchronized between application instances.
+- The LRU provides fast local access.
+- Cuckoo filters provide compact key-existence hints, not stored values.
+- False positives are possible, so a positive filter result does not guarantee that a value exists.
+- The cache does not fall back to MongoDB.
 
-    appDB := bootstrap.Mongo_Client.Database("myapp")
-    users := appDB.Collection("users")
-    if _, err := users.InsertOne(ctx, map[string]string{"name": "Ada"}); err != nil {
-        return err
-    }
-    return bootstrap.Redis_Client.Ping(ctx).Err()
-}
-```
+Cache operations use a three-second timeout by default. Context cancellation and earlier context deadlines are respected. A nil context is treated as `context.Background()`.
 
-`bootstrap.Breaker` is the shared breaker registry. Its `Execute` method runs an operation behind a named breaker:
+## Cuckoo Filters and Shard System
 
-```go
-result, err := bootstrap.Breaker.Execute("Mongo", func() (any, error) {
-    return performMongoOperation()
-})
-```
+Cuckoo filters provide compact, in-memory key-existence hints.
 
-If the calling application needs to decide how startup failures are handled, use the error-returning `bootstrap.Run()` instead of `MustRun()`:
+They are not value stores or authoritative indexes.
 
-```go
-if err := bootstrap.Run(); err != nil {
-    return err
-}
-```
+The shard system organizes filters into multiple shards and manages their capacity.
 
-The initialized clients are long-lived connection pools; reuse them rather than creating a new client per operation. Close them during application shutdown:
+Key characteristics:
 
-```go
-defer bootstrap.Mongo_Client.Disconnect(ctx)
-defer bootstrap.Redis_Client.Close()
-```
+- Multiple shards can be maintained as capacity grows.
+- New shards are created when the current shard reaches its capacity.
+- Existing keys are checked to avoid unnecessary duplicate insertions.
+- Negative filter results can help skip unnecessary local cache lookups.
+- Positive results still require checking the actual cache.
+- False positives are possible.
 
-Applications can import `pkg/db/mongo`, `pkg/db/redis`, or `pkg/breaker` directly when they need custom configuration or policies instead of bootstrap's shared defaults.
+Cuckoo filters are an optimization layer and should not be treated as the source of truth for cached data.
 
-## Circuit breakers
+## Circuit Breakers
 
-Bootstrap uses the shared named breakers for MongoDB and Redis connections. Applications that need custom behavior can use `pkg/breaker` directly; breaker state changes are logged, and thresholds/timeouts are configured centrally.
+Bootstrap exposes a shared circuit-breaker registry through `bootstrap.Breaker`.
 
-## Lifecycle
+Use named breakers for dependencies such as MongoDB and Redis. This allows operations targeting the same dependency to share breaker state.
 
-Infrastructure clients should:
+The lower-level `pkg/breaker` package is also available when an application needs its own breaker registry.
 
-1. Validate configuration.
-2. Connect using bounded contexts.
-3. Verify connectivity.
-4. Reuse connection pools.
-5. Execute external calls behind circuit breakers.
-6. Close cleanly during application shutdown.
+## Lower-Level Packages
 
-The current Cuckoo filters are in-memory only. Persistent key-index support will need to restore and validate snapshots, distinguish complete from rebuilding state, periodically persist changes, and flush on graceful shutdown. If the index is incomplete or unavailable, reads must fall back to the cache/database path rather than treating an absent key as definitive.
+Twivo Core is modular. Applications can use individual packages without relying entirely on the high-level API.
 
-Reusable packages should return errors instead of terminating the process. Avoid mutable package-level clients and long-lived operations without context cancellation.
+| Package | Responsibility |
+|---|---|
+| `pkg/bootstrap` | Shared infrastructure initialization |
+| `pkg/db/mongo` | MongoDB integration |
+| `pkg/db/redis` | Redis integration |
+| `pkg/breaker` | Circuit-breaker implementation |
+| `pkg/twivo` | High-level cache API |
+| `pkg/shard` | Sharding and Cuckoo filter functionality |
 
-## Development guidelines
+See the package documentation for exported APIs and implementation-specific details.
 
-- Keep each package focused on one infrastructure concern.
-- Return errors and let applications decide how to handle them.
-- Make helper workflows configurable and provide lower-level escape hatches.
-- Use interfaces when provider-independent behavior improves testing.
-- Keep credentials outside source control.
-- Add unit tests for helpers and cache policies.
-- Add integration tests for MongoDB and Redis.
-- Format Go code and run tests before committing.
+## Make Commands
+
+| Command | Description |
+|---|---|
+| `make dev` | Start the development environment |
+| `make test` | Run tests |
+| `make shell` | Open the development shell |
+| `make build-dev` | Build the development image |
+| `make build-test` | Build the test image |
+| `make build-prod` | Build the production image |
+| `make prod` | Start the production environment |
+| `make logs` | Follow environment logs |
+| `make down` | Stop the environment |
+| `make help` | Display available commands |
+| `make build` | Alias for `make build-prod` |
 
 ## Testing
+
+Run the Go test suite:
 
 ```bash
 go test ./...
 ```
 
-Integration tests should isolate external services and skip cleanly when dedicated infrastructure is unavailable.
+Or use:
 
-As the planned data layer is added, tests should cover cache hits and misses, fallback ordering, batch partial failures, query construction, filter false positives, stale/corrupt snapshots, rebuild behavior, and consistency across successful writes and deletes.
+```bash
+make test
+```
 
-## Status
+Format Go source files:
 
-Twivo Core is under active development. MongoDB, Redis, bootstrap, and breaker helpers are available. Single-key local LRU/Redis cache operations and process-local Cuckoo-filter sharding are implemented; batch APIs, query builders, MongoDB cache fallback, and durable Cuckoo-filter workflows remain roadmap items. Public APIs, persistence guarantees, and configuration may evolve as those designs become stable.
+```bash
+gofmt -w .
+```
+
+## Project Structure
+
+```text
+twivo-core/
+├── infra/
+│   ├── .env.example
+│   └── ...
+├── pkg/
+│   ├── bootstrap/
+│   ├── breaker/
+│   ├── db/
+│   │   ├── mongo/
+│   │   └── redis/
+│   ├── shard/
+│   └── twivo/
+├── Makefile
+├── go.mod
+└── README.md
+```
+
+## Project Status
+
+Twivo Core is being developed as shared infrastructure for the Twivo ecosystem.
+
+The README documents the implemented interfaces and supported workflows. Features still under development should not be considered available until implemented and tested.
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full text.
+See [LICENSE](LICENSE).
