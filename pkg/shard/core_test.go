@@ -42,6 +42,7 @@ func TestReadLRU(t *testing.T) {
 func TestReadCuckoo(t *testing.T) {
 	const key = "testKey"
 	exists := WriteCuckoo(key)
+	Shard.lastCount++
 	if exists {
 		t.Errorf("expected %q not to be found in cuckoo filter", key)
 	}
@@ -61,6 +62,7 @@ func TestReadCuckoo(t *testing.T) {
 	for i := 0; i < n; i++ {
 		k := fmt.Sprintf("key%d", i)
 		WriteCuckoo(k)
+		Shard.lastCount++
 	}
 	notexists := WriteCuckoo(key)
 	if !notexists {
