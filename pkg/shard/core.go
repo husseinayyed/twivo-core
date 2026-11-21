@@ -171,12 +171,14 @@ func WriteLRU(key string, value any, force bool) {
 		- Returns: The value associated with the key (if found) and a boolean indicating whether the key exists in the cache (true) or not (false).
 */
 func Read(key string) (any, bool) {
-	exists := ReadCuckoo(key)
-	if !exists {
-		return nil, false
-	}
+	// exists := ReadCuckoo(key)
+	// if !exists {
+	// 	return nil, false
+	// }
 	return ReadLRU(key)
 }
+
+
 
 /*
 	 Write adds a key-value pair to both the cuckoo filter and the LRU cache. It first checks if the key already exists in the cuckoo filter. If it does, it will not add the key again. If it doesn't exist, it will add the key to both the cuckoo filter and the LRU cache.
@@ -185,6 +187,6 @@ func Read(key string) (any, bool) {
 		- Force: A boolean indicating whether to force the addition of the key-value pair even if it already exists in the cache.
 */
 func Write(key string, value any, force bool) {
-	WriteCuckoo(key)
+	// WriteCuckoo(key)
 	WriteLRU(key, value, force)
 }
