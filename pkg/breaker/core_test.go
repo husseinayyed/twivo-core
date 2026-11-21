@@ -70,9 +70,7 @@ func TestRegistryConcurrentAccess(t *testing.T) {
 	var wait sync.WaitGroup
 
 	for worker := 0; worker < workers; worker++ {
-		wait.Add(1)
-		go func(worker int) {
-			defer wait.Done()
+		wait.Go(func() {
 			<-start
 			for iteration := 0; iteration < iterations; iteration++ {
 				result, err := registry.Execute("test", func() (any, error) {
@@ -91,19 +89,17 @@ func TestRegistryConcurrentAccess(t *testing.T) {
 					return
 				}
 			}
-		}(worker)
+		})
 	}
 
 	// Re-registering while operations run exercises synchronized access to the registry map.
-	wait.Add(1)
-	go func() {
-		defer wait.Done()
+	wait.Go(func() {
 		<-start
 		for i := 0; i < iterations; i++ {
 			registry.New("test", time.Second, time.Second)
 			registry.State("test")
 		}
-	}()
+	})
 
 	close(start)
 	wait.Wait()
